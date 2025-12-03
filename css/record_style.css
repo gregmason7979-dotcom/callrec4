@@ -518,6 +518,76 @@ h6 {
   min-width: 0;
 }
 
+/* Dark theme support for search and index views */
+.modern-body {
+  background: #0d1117;
+  color: #e5e7eb;
+}
+
+.modern-body .card,
+.modern-body .card__header,
+.modern-body .recordings__surface,
+.modern-body .content,
+.modern-body .record-table,
+.modern-body .record-table--detail,
+.modern-body .recordings,
+.modern-body .showfull {
+  background: linear-gradient(135deg, rgba(12, 18, 33, 0.96), rgba(6, 10, 20, 0.94));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e5e7eb;
+}
+
+.modern-body .table_top {
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.modern-body .table_row,
+.modern-body .table_row td,
+.modern-body .record-table--roster .table_row td,
+.modern-body .record-table--detail .record-cell {
+  background: linear-gradient(135deg, rgba(12, 18, 33, 0.92), rgba(8, 12, 26, 0.9));
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #e5e7eb;
+}
+
+.modern-body .table_row:hover {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(11, 16, 30, 0.95));
+}
+
+.modern-body .table_row--empty td,
+.modern-body .showfull__loading,
+.modern-body .showfull__error {
+  color: #cbd5e1;
+}
+
+.modern-body .table-link__label,
+.modern-body .table-link__hint,
+.modern-body .table_content__primary {
+  color: #e5e7eb;
+}
+
+.modern-body .search-advanced label {
+  color: #e5e7eb;
+}
+
+.modern-body .search-advanced input,
+.modern-body .search-advanced select,
+.modern-body select,
+.modern-body option {
+  background: linear-gradient(135deg, rgba(8, 12, 26, 0.92), rgba(4, 7, 15, 0.96));
+  color: #e5e7eb;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.modern-body .search-advanced option,
+.modern-body option {
+  background-color: #0f172a;
+}
+
 .record-table--roster .table_content__primary {
   gap: 0.4rem;
 }
