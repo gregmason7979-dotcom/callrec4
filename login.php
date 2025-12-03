@@ -24,6 +24,9 @@ $recordCssVersion = file_exists($recordCssPath) ? filemtime($recordCssPath) : ti
                         <?php if(isset($_SESSION['invalid'])) { ?>
                         <div class="auth-card__alert" role="alert">Invalid credentials. Please try again.</div>
                         <?php unset($_SESSION['invalid']); } ?>
+                        <?php if(isset($_SESSION['logout_message'])) { ?>
+                        <div class="auth-card__alert auth-card__alert--info" role="status"><?php echo htmlspecialchars($_SESSION['logout_message'], ENT_QUOTES, 'UTF-8'); ?></div>
+                        <?php unset($_SESSION['logout_message']); } ?>
                         <form action="process.php" method="post" accept-charset="utf-8" class="auth-form">
                                 <label class="auth-field" for="username">
                                         <span class="auth-field__label">Username</span>
