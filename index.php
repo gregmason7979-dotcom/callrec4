@@ -298,6 +298,22 @@ $(document).ready(function(){
 
                 fetchRecordings(agentKey, directory, scope, page, true);
         });
+
+        var $searchPaginationForm = $('#search-pagination-form');
+        var $searchPageControl = $('#search-page-control');
+
+        $('.app-main').on('click', '.search-pagination__btn', function(event){
+                event.preventDefault();
+
+                if (!$searchPaginationForm.length || !$searchPageControl.length) {
+                        return;
+                }
+
+                var targetPage = parseInt($(this).data('page'), 10) || 1;
+
+                $searchPageControl.val(targetPage);
+                $searchPaginationForm.trigger('submit');
+        });
 });
         </script>
 
@@ -311,6 +327,12 @@ $(document).ready(function(){
         $otherPartyFilter = isset($_POST['other_party']) ? trim((string) $_POST['other_party']) : '';
         $serviceGroupFilter = isset($_POST['service_group']) ? trim((string) $_POST['service_group']) : '';
         $callIdFilter = isset($_POST['call_id']) ? trim((string) $_POST['call_id']) : '';
+        $searchPage = isset($_POST['search_page']) ? (int) $_POST['search_page'] : 1;
+        $searchPerPage = 20;
+
+        if ($searchPage < 1) {
+                $searchPage = 1;
+        }
 
         $startDateFilter = '';
         $endDateFilter = '';
@@ -332,6 +354,37 @@ $(document).ready(function(){
                 'end_date' => $endDateFilter,
                 'agent' => $selectedAgentFilter,
         );
+
+        function formatBytesHuman($bytes)
+        {
+                if (!is_numeric($bytes) || $bytes < 0) {
+                        return null;
+                }
+
+                $units = array('B', 'KB', 'MB', 'GB', 'TB', 'PB');
+                $power = 0;
+
+                while ($bytes >= 1024 && $power < count($units) - 1) {
+                        $bytes /= 1024;
+                        $power++;
+                }
+
+                $precision = ($power === 0) ? 0 : 1;
+
+                return round($bytes, $precision) . ' ' . $units[$power];
+        }
+
+        $recordingRoot = rtrim(maindirectory, '/\\');
+        $diskTotalSpace = @disk_total_space($recordingRoot);
+        $diskFreeSpace = @disk_free_space($recordingRoot);
+        $diskUsedSpace = (is_numeric($diskTotalSpace) && is_numeric($diskFreeSpace)) ? $diskTotalSpace - $diskFreeSpace : null;
+
+        $totalIndexedSize = $model->getTotalIndexedRecordingSize();
+
+        $diskFreeLabel = formatBytesHuman($diskFreeSpace) ?: 'Unavailable';
+        $diskTotalLabel = formatBytesHuman($diskTotalSpace) ?: 'Unavailable';
+        $diskUsedLabel = formatBytesHuman($diskUsedSpace) ?: 'Unavailable';
+        $indexedSizeLabel = formatBytesHuman($totalIndexedSize) ?: 'Unavailable';
 
         $agentRoster = $model->getAgentRoster();
         $agentNameMap = array();
@@ -434,14 +487,14 @@ No previous sync found. Click to build the index.
       <span class="trend <?php echo $recordingSyncLabel !== null ? 'up' : 'neutral'; ?>"><?php echo $recordingSyncLabel !== null ? 'Indexed' : 'Needs sync'; ?></span>
     </div>
     <div class="stat">
-      <p class="eyebrow">Viewing</p>
-      <strong><?php echo $actionType === '' ? 'All agents' : 'Filtered'; ?></strong>
-      <span class="trend neutral">Click an agent to expand</span>
+      <p class="eyebrow">Recording index size</p>
+      <strong><?php echo htmlspecialchars($indexedSizeLabel, ENT_QUOTES, 'UTF-8'); ?></strong>
+      <span class="trend <?php echo $totalIndexedSize !== null ? 'up' : 'neutral'; ?>"><?php echo $totalIndexedSize !== null ? 'Indexed footprint' : 'Awaiting sync'; ?></span>
     </div>
     <div class="stat">
-      <p class="eyebrow">Workspace</p>
-      <strong>Secure</strong>
-      <span class="trend up">Session active</span>
+      <p class="eyebrow">Storage</p>
+      <strong><?php echo htmlspecialchars($diskFreeLabel, ENT_QUOTES, 'UTF-8'); ?></strong>
+      <span class="trend <?php echo (is_numeric($diskUsedSpace) && is_numeric($diskTotalSpace)) ? 'up' : 'neutral'; ?>">Free of <?php echo htmlspecialchars($diskTotalLabel, ENT_QUOTES, 'UTF-8'); ?><?php if ($diskUsedLabel !== 'Unavailable') { ?> (Used <?php echo htmlspecialchars($diskUsedLabel, ENT_QUOTES, 'UTF-8'); ?>)<?php } ?></span>
     </div>
   </div>
 </section>
@@ -533,17 +586,180 @@ No previous sync found. Click to build the index.
         </table>
 <?php
 }else{
-                $i=0;
-                $indexedResults = $model->searchIndexedRecordings($filters, 500);
-                $hasIndexedResults = is_array($indexedResults) && count($indexedResults) > 0;
-                $useFilesystemFallback = !is_array($indexedResults) || !$hasIndexedResults;
-                $list_full = $useFilesystemFallback ? scandir($directory) : array();
-
-                if (!is_array($list_full)) {
-                        $list_full = array();
-                }
+                $searchOffset = ($searchPage - 1) * $searchPerPage;
+                $searchTotalRecords = 0;
+                $searchTotalPages = 1;
+                $searchRecords = array();
                 $resultsRendered = false;
+
+                $indexedResults = $model->searchIndexedRecordings($filters, $searchPage, $searchPerPage);
+                $hasIndexedResults = is_array($indexedResults) && isset($indexedResults['records']);
+                $useFilesystemFallback = !is_array($indexedResults) || !$hasIndexedResults;
+
+                if ($hasIndexedResults) {
+                        $searchRecords = is_array($indexedResults['records']) ? $indexedResults['records'] : array();
+                        $searchTotalRecords = isset($indexedResults['total']) ? (int) $indexedResults['total'] : count($searchRecords);
+                        $resultsRendered = count($searchRecords) > 0;
+                }
+
+                if ($useFilesystemFallback) {
+                        $list_full = scandir($directory);
+
+                        if (!is_array($list_full)) {
+                                $list_full = array();
+                        }
+
+                        $fallbackRecords = array();
+
+                        foreach($list_full as $value_full)
+                        {
+                                if (in_array($value_full,array(".",".."))) {
+                                        continue;
+                                }
+
+                                if ($selectedAgentFilter !== '' && $selectedAgentFilter !== $value_full) {
+                                        continue;
+                                }
+
+                                $agentLabel = isset($agentNameMap[$value_full]) ? $agentNameMap[$value_full] : null;
+
+                                if ($agentLabel === null) {
+                                        $select        =       "select first_name,last_name from dbo.cc_user where id='".ltrim($value_full,'0')."'";
+                                        $query  =       sqlsrv_query(connect,$select);
+
+                                        if($query==true){
+                                        $result =       sqlsrv_fetch_array($query,SQLSRV_FETCH_ASSOC);
+                                        $agentLabel = (isset($result['first_name']) ? $result['first_name'] . ' ' : '') . (isset($result['last_name']) ? $result['last_name'] : '');
+                                        sqlsrv_free_stmt($query);
+                                        }
+                                }
+
+                                if ($agentLabel === null || $agentLabel === '') {
+                                        $agentLabel = $value_full;
+                                }
+
+                                $subdirectory   =       $directory.$value_full;
+
+                                if(!is_dir($subdirectory)) {
+                                        continue;
+                                }
+
+                                $list = $model->Sort_Directory_Files_By_Last_Modified($subdirectory);
+
+                                if(is_array($list) && isset($list[0]) && is_array($list[0])) {
+                                        foreach($list[0] as $value)
+                                        {
+                                                if (in_array($value['file'],array(".",".."))) {
+                                                        continue;
+                                                }
+
+                                                $play   =       $directory.$value_full.DIRECTORY_SEPARATOR.$value['file'];
+
+                                                if(is_dir($play))
+                                                {
+                                                        $ulist = $model->Sort_Directory_Files_By_Last_Modified($play);
+
+                                                        if(is_array($ulist) && isset($ulist[0]) && is_array($ulist[0])) {
+                                                                foreach($ulist[0] as $uval)
+                                                                {
+                                                                        if(!is_file($play.DIRECTORY_SEPARATOR.$uval['file'])) {
+                                                                                continue;
+                                                                        }
+
+                                                                        $uexplode       =       explode('$',$uval['file']);
+                                                                        $uservicegroup  =       $uexplode[0];
+                                                                        $udatetime              =       $uexplode[1];
+                                                                        $udescription   =       $uexplode[3];
+                                                                        $uotherparty    =       $uexplode[2];
+                                                                        $ucallid                =       $uexplode[4];
+                                                                        $ucall                  =       explode('.',$ucallid);
+                                                                        $recordingMeta = array(
+                                                                                        'description' => $udescription,
+                                                                                        'other_party' => $uotherparty,
+                                                                                        'service_group' => $uservicegroup,
+                                                                                        'call_id' => $ucall[0],
+                                                                                        'datetime' => $udatetime
+                                                                        );
+
+                                                                        if (recordingMatchesFilters($filters, $recordingMeta)) {
+                                                                                $fallbackRecords[] = array(
+                                                                                        'agent' => $value_full,
+                                                                                        'segments' => array($value_full, $value['file'], $uval['file']),
+                                                                                        'downloadName' => $uval['file'],
+                                                                                        'otherparty' => $uotherparty,
+                                                                                        'datetime' => $udatetime,
+                                                                                        'servicegroup' => $uservicegroup,
+                                                                                        'callId' => $ucall[0],
+                                                                                        'description' => $udescription,
+                                                                                );
+                                                                        }
+                                                                }
+                                                        }
+                                                }
+
+                                                if(is_file($play))
+                                                {
+                                                        $explode        =       explode('$',$value['file']);
+                                                        $servicegroup   =       $explode[0];
+                                                        $datetime               =       $explode[1];
+                                                        $description    =       $explode[3];
+                                                        $otherparty             =       $explode[2];
+                                                        $callid                 =       $explode[4];
+                                                        $call                   =       explode('.',$callid);
+                                                        $recordingMeta = array(
+                                                                        'description' => $description,
+                                                                        'other_party' => $otherparty,
+                                                                        'service_group' => $servicegroup,
+                                                                        'call_id' => $call[0],
+                                                                        'datetime' => $datetime
+                                                        );
+
+                                                        if (recordingMatchesFilters($filters, $recordingMeta)) {
+                                                                $fallbackRecords[] = array(
+                                                                        'agent' => $value_full,
+                                                                        'segments' => array($value_full, $value['file']),
+                                                                        'downloadName' => $value['file'],
+                                                                        'otherparty' => $otherparty,
+                                                                        'datetime' => $datetime,
+                                                                        'servicegroup' => $servicegroup,
+                                                                        'callId' => $call[0],
+                                                                        'description' => $description,
+                                                                );
+                                                        }
+                                                 }
+                                        }
+                                }
+                        }
+
+                        $searchTotalRecords = count($fallbackRecords);
+
+                        if ($searchTotalRecords > 0) {
+                                $searchRecords = array_slice($fallbackRecords, $searchOffset, $searchPerPage);
+                                $resultsRendered = count($searchRecords) > 0;
+                        }
+                }
+
+                if ($searchTotalRecords > 0) {
+                        $searchTotalPages = (int) ceil($searchTotalRecords / $searchPerPage);
+
+                        if ($searchTotalPages < 1) {
+                                $searchTotalPages = 1;
+                        }
+                }
+
+                $rowNumber = $searchOffset;
                 ?>
+    <form id="search-pagination-form" method="POST" action="index.php" class="sr-only">
+      <input type="hidden" name="action" value="<?php echo htmlspecialchars($actionType, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="agent" value="<?php echo htmlspecialchars($selectedAgentFilter, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="name" value="<?php echo htmlspecialchars($descriptionFilter, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="other_party" value="<?php echo htmlspecialchars($otherPartyFilter, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="service_group" value="<?php echo htmlspecialchars($serviceGroupFilter, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="call_id" value="<?php echo htmlspecialchars($callIdFilter, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="date" value="<?php echo htmlspecialchars($startDateFilter, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="enddate" value="<?php echo htmlspecialchars($endDateFilter, ENT_QUOTES, 'UTF-8'); ?>">
+      <input type="hidden" name="search_page" id="search-page-control" value="<?php echo $searchPage; ?>">
+    </form>
     <table class="record-table">
                                            <tr class="table_top">
                                            <th width="300">Agent Name</th>
@@ -554,10 +770,10 @@ No previous sync found. Click to build the index.
                                                         <th>Description</th>
                                            </tr>
         <?php
-        if ($hasIndexedResults) {
+        if (!empty($searchRecords)) {
                 $grouped = array();
 
-                foreach ($indexedResults as $record) {
+                foreach ($searchRecords as $record) {
                         $agentKey = isset($record['agent']) ? $record['agent'] : '';
                         $grouped[$agentKey][] = $record;
                 }
@@ -577,10 +793,9 @@ No previous sync found. Click to build the index.
                                           </tr>
         <?php
                         foreach ($agentRecords as $record) {
-                                $i++;
-                                $resultsRendered = true;
+                                $rowNumber++;
                                 echo $model->renderRecordingRow(
-                                        $i,
+                                        $rowNumber,
                                         $record['segments'],
                                         $record['downloadName'],
                                         $record['otherparty'],
@@ -591,184 +806,7 @@ No previous sync found. Click to build the index.
                                 );
                         }
                 }
-        }
-
-        if ($useFilesystemFallback) {
-                if ($hasIndexedResults === false && is_array($indexedResults)) {
-        ?>
-        <tr class="table_row table_row--empty"><td colspan="6" class="table_cell--empty">No indexed results were found. Showing filesystem scan instead.</td></tr>
-        <?php
-                }
-        foreach($list_full as $value_full)
-        {
-                if (in_array($value_full,array(".",".."))) {
-                        continue;
-                }
-
-                if ($selectedAgentFilter !== '' && $selectedAgentFilter !== $value_full) {
-                        continue;
-                }
-
-                $agentLabel = isset($agentNameMap[$value_full]) ? $agentNameMap[$value_full] : null;
-
-                if ($agentLabel === null) {
-                        $select        =       "select first_name,last_name from dbo.cc_user where id='".ltrim($value_full,'0')."'";
-                        $query  =       sqlsrv_query(connect,$select);
-
-                        if($query==true){
-                        $result =       sqlsrv_fetch_array($query,SQLSRV_FETCH_ASSOC);
-                        $agentLabel = (isset($result['first_name']) ? $result['first_name'] . ' ' : '') . (isset($result['last_name']) ? $result['last_name'] : '');
-                        sqlsrv_free_stmt($query);
-                        }
-                }
-
-                if ($agentLabel === null || $agentLabel === '') {
-                        $agentLabel = $value_full;
-                }
-        ?>
-                                               <tr class="table_row table_row--agent"><td colspan="6" class="table_content">
-                                                 <span class="icon-chip icon-chip--chevron" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path fill="currentColor" d="m10.5 7.5 5 4.5-5 4.5a.75.75 0 0 1-1-.06.75.75 0 0 1 .06-1l3.63-3.27L9.56 8.56a.75.75 0 0 1 1-1.06Z"/></svg></span>
-                                                 <span class="icon-chip icon-chip--agent" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path fill="currentColor" d="M12 13.25a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 1.5c-3.51 0-6.5 1.92-6.5 4.5a.75.75 0 0 0 .75.75h11.5a.75.75 0 0 0 .75-.75c0-2.58-2.99-4.5-6.5-4.5Z"/></svg></span>
-                                                 <span class="table-link">
-                                                   <span class="table-link__label"><?php echo htmlspecialchars($agentLabel, ENT_QUOTES, 'UTF-8'); ?></span>
-                                                   <span class="table-link__hint">Filtered results</span>
-                                                 </span>
-                                                 <span class="table-link__chevron" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path fill="currentColor" d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                                               </td>
-                                          </tr>
-                <?php
-                        $subdirectory   =       $directory.$value_full;
-                        $new_array      =       array();
-
-                        if(is_dir($subdirectory))
-                        {
-                                $list = $model->Sort_Directory_Files_By_Last_Modified($subdirectory);
-
-                                foreach($list[0] as $value)
-                                {
-                                        if (in_array($value['file'],array(".",".."))) {
-                                                continue;
-                                        }
-
-                                        $play   =       $directory.$value_full.DIRECTORY_SEPARATOR.$value['file'];
-
-                                        if(is_dir($play))
-                                        {
-                                                $unew_array     =       array();
-                                                $ulist = $model->Sort_Directory_Files_By_Last_Modified($play);
-
-                                                foreach($ulist[0] as $uval)
-                                                {
-                                                        if(!is_file($play.DIRECTORY_SEPARATOR.$uval['file'])) {
-                                                                continue;
-                                                        }
-
-                                                        $uexplode       =       explode('$',$uval['file']);
-                                                        $uservicegroup  =       $uexplode[0];
-                                                        $udatetime              =       $uexplode[1];
-                                                        $udescription   =       $uexplode[3];
-                                                        $uotherparty    =       $uexplode[2];
-                                                        $ucallid                =       $uexplode[4];
-                                                        $ucall                  =       explode('.',$ucallid);
-                                                        $recordingMeta = array(
-                                                                        'description' => $udescription,
-                                                                        'other_party' => $uotherparty,
-                                                                        'service_group' => $uservicegroup,
-                                                                        'call_id' => $ucall[0],
-                                                                        'datetime' => $udatetime
-                                                        );
-
-                                                        if (recordingMatchesFilters($filters, $recordingMeta)) {
-                                                                $unew_array[]   =       $uval['file'];
-                                                        }
-                                                }
-
-                                                if(is_array($unew_array))
-                                                {
-                                                        foreach($unew_array as $uuval)
-                                                        {
-                                                                $i++;
-                                                                $resultsRendered = true;
-                                                                $uuplay =       $directory.$value_full.DIRECTORY_SEPARATOR.$value['file'].DIRECTORY_SEPARATOR.$uuval;
-
-                                                                if(!is_file($uuplay)) {
-                                                                        continue;
-                                                                }
-
-                                                                $uuexplode      =       explode('$',$uuval);
-                                                                $uuservicegroup =       $uuexplode[0];
-                                                                $uudatetime             =       $uuexplode[1];
-                                                                $uudescription  =       $uuexplode[3];
-                                                                $uuotherparty   =       $uuexplode[2];
-                                                                $uucallid               =       $uuexplode[4];
-                                                                $uucall                 =       explode('.',$uucallid);
-                                                                ?>
-                                                                <?php echo $model->renderRecordingRow(
-                                                                        $i,
-                                                                        array($value_full, $value['file'], $uuval),
-                                                                        $uuval,
-                                                                        $uuotherparty,
-                                                                        $uudatetime,
-                                                                        $uuservicegroup,
-                                                                        $uucall[0],
-                                                                        $uudescription
-                                                                ); ?>
-                                                          <?php }
-                                                }
-                                        }
-
-                                        if(is_file($play))
-                                        {
-                                                $explode        =       explode('$',$value['file']);
-                                                $servicegroup   =       $explode[0];
-                                                $datetime               =       $explode[1];
-                                                $description    =       $explode[3];
-                                                $otherparty             =       $explode[2];
-                                                $callid                 =       $explode[4];
-                                                $call                   =       explode('.',$callid);
-                                                $recordingMeta = array(
-                                                                'description' => $description,
-                                                                'other_party' => $otherparty,
-                                                                'service_group' => $servicegroup,
-                                                                'call_id' => $call[0],
-                                                                'datetime' => $datetime
-                                                );
-
-                                                if (recordingMatchesFilters($filters, $recordingMeta)) {
-                                                        $new_array[]    =       $value['file'];
-                                                }
-                                         }
-                                }
-                        }
-
-                        if(is_array($new_array))
-                        {
-                                        foreach($new_array as $val)
-                                        {
-                                                $i++;
-                                                $resultsRendered = true;
-                                                $play   =       $directory.$value_full.DIRECTORY_SEPARATOR.$val;
-                                                $explode        =       explode('$',$val);
-                                                $servicegroup   =       $explode[0];
-                                                $datetime               =       $explode[1];
-                                                $description    =       $explode[3];
-                                        $otherparty             =       $explode[2];
-                                        $callid                 =       $explode[4];
-                                        $call                   =       explode('.',$callid);
-                                        ?>
-                                        <?php echo $model->renderRecordingRow(
-                                                $i,
-                                                array($value_full, $val),
-                                                $val,
-                                                $otherparty,
-                                                $datetime,
-                                                $servicegroup,
-                                                $call[0],
-                                                $description
-                                        ); ?>
-                                  <?php }
-                        }
-                }
+                $resultsRendered = true;
         }
 
         if (!$resultsRendered) {
@@ -778,6 +816,22 @@ No previous sync found. Click to build the index.
         }
         ?>
                                         </table>
+
+        <?php if ($searchTotalPages > 1) { ?>
+        <nav class="pagination search-pagination" aria-label="Search results pagination">
+          <?php if ($searchPage > 1) { $prevPage = $searchPage - 1; ?>
+          <button type="button" class="pagination__btn search-pagination__btn" data-page="<?php echo $prevPage; ?>">Previous</button>
+          <?php } else { ?>
+          <span class="pagination__placeholder"></span>
+          <?php } ?>
+          <span class="pagination__status">Page <?php echo $searchPage; ?> of <?php echo $searchTotalPages; ?></span>
+          <?php if ($searchPage < $searchTotalPages) { $nextPage = $searchPage + 1; ?>
+          <button type="button" class="pagination__btn search-pagination__btn" data-page="<?php echo $nextPage; ?>">Next</button>
+          <?php } else { ?>
+          <span class="pagination__placeholder"></span>
+          <?php } ?>
+        </nav>
+        <?php } ?>
 
         <?php } ?>
   </div>

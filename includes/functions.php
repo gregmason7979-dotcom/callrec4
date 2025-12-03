@@ -1087,17 +1087,24 @@
                         );
                 }
 
-                public function searchIndexedRecordings(array $filters, $limit = 500)
+                public function searchIndexedRecordings(array $filters, $page = 1, $perPage = 20)
                 {
                         if (!$this->recordingIndexAvailable()) {
                                 return null;
                         }
 
-                        $limit = (int) $limit;
+                        $page = (int) $page;
+                        $perPage = (int) $perPage;
 
-                        if ($limit <= 0) {
-                                $limit = 500;
+                        if ($page < 1) {
+                                $page = 1;
                         }
+
+                        if ($perPage <= 0) {
+                                $perPage = 20;
+                        }
+
+                        $offset = ($page - 1) * $perPage;
 
                         $where = array('1 = 1');
                         $params = array();
@@ -1147,14 +1154,31 @@
 
                         $whereSql = implode(' AND ', $where);
 
-                        $sql = "SELECT agent_directory, relative_path, recording_name, service_group, other_party, call_id, description, recorded_at\n"
-                             . "FROM dbo.recordings_index\n"
-                             . "WHERE {$whereSql}\n"
-                             . "ORDER BY recorded_at DESC, id DESC OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY";
+                        $countSql = "SELECT COUNT(*) AS total FROM dbo.recordings_index WHERE {$whereSql}";
+                        $countStmt = sqlsrv_query(connect, $countSql, $params);
 
-                        $params[] = $limit;
+                        if ($countStmt === false) {
+                                $this->logMessage('error', 'Failed to count indexed recordings for search', array('filters' => $filters, 'errors' => $this->collectSqlErrors()));
+                                return null;
+                        }
 
-                        $stmt = sqlsrv_query(connect, $sql, $params);
+                        $countRow = sqlsrv_fetch_array($countStmt, SQLSRV_FETCH_ASSOC);
+                        sqlsrv_free_stmt($countStmt);
+
+                        $total = isset($countRow['total']) ? (int) $countRow['total'] : 0;
+
+                        if ($total === 0) {
+                                return array('records' => array(), 'total' => 0);
+                        }
+
+                        $listSql = "SELECT agent_directory, relative_path, recording_name, service_group, other_party, call_id, description, recorded_at\n"
+                                . "FROM dbo.recordings_index\n"
+                                . "WHERE {$whereSql}\n"
+                                . "ORDER BY recorded_at DESC, id DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY";
+
+                        $listParams = array_merge($params, array($offset, $perPage));
+
+                        $stmt = sqlsrv_query(connect, $listSql, $listParams);
 
                         if ($stmt === false) {
                                 $this->logMessage('error', 'Failed to search indexed recordings', array('filters' => $filters, 'errors' => $this->collectSqlErrors()));
@@ -1195,7 +1219,34 @@
 
                         sqlsrv_free_stmt($stmt);
 
-                        return $records;
+                        return array(
+                                'records' => $records,
+                                'total' => $total,
+                        );
+                }
+
+                public function getTotalIndexedRecordingSize()
+                {
+                        if (!$this->recordingIndexAvailable()) {
+                                return null;
+                        }
+
+                        $sql = "SELECT SUM(file_size) AS total_size FROM dbo.recordings_index";
+                        $stmt = sqlsrv_query(connect, $sql);
+
+                        if ($stmt === false) {
+                                $this->logMessage('error', 'Failed to sum indexed recording sizes', array('errors' => $this->collectSqlErrors()));
+                                return null;
+                        }
+
+                        $row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC);
+                        sqlsrv_free_stmt($stmt);
+
+                        if (!isset($row['total_size'])) {
+                                return null;
+                        }
+
+                        return (int) $row['total_size'];
                 }
 
                 public function runRecordingIndexer($baseDirectory = null, $mode = 'full')

@@ -10,6 +10,11 @@ $dateEndValue = isset($_POST['enddate']) ? htmlspecialchars($_POST['enddate'], E
 $otherPartyValue = isset($_POST['other_party']) ? htmlspecialchars($_POST['other_party'], ENT_QUOTES, 'UTF-8') : '';
 $selectedServiceGroup = isset($_POST['service_group']) ? $_POST['service_group'] : '';
 $callIdValue = isset($_POST['call_id']) ? htmlspecialchars($_POST['call_id'], ENT_QUOTES, 'UTF-8') : '';
+$searchPageValue = isset($_POST['search_page']) ? (int) $_POST['search_page'] : 1;
+
+if ($searchPageValue < 1) {
+        $searchPageValue = 1;
+}
 ?>
 <link rel="stylesheet" href="ui/1.11.2/themes/base/jquery-ui.css">
 <script src="jquery-1.10.2.js"></script>
@@ -22,8 +27,12 @@ $(function() {
         var $searchForm = $('.search-advanced');
         var $loading = $('#search-loading');
         var $submitButton = $('.search-form__submit');
+        var $searchPageInput = $('input[name="search_page"]');
 
         $searchForm.on('submit', function() {
+                if ($searchPageInput.length) {
+                        $searchPageInput.val('1');
+                }
                 $submitButton.prop('disabled', true).addClass('search-form__submit--loading');
                 $loading.attr('aria-hidden', 'false').addClass('search-loading--visible');
         });
@@ -95,6 +104,7 @@ $(function() {
       <div class="search-advanced__hint">Use the dashboard for the latest 14 days of recordings. Searches here retrieve older history and large archives.</div>
       <div class="pill-row">
         <input type="hidden" name="action" value="search">
+        <input type="hidden" name="search_page" value="<?php echo $searchPageValue; ?>">
         <button type="submit" class="primary search-form__submit">Search</button>
         <a class="pill ghost" href="search.php">Clear filters</a>
       </div>
